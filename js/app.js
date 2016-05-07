@@ -1,181 +1,228 @@
-var MenuItem = Backbone.Model.extend({
+(function() {
+  'use strict';
+
+  var router; // The subviews set URLs to trigger actions
+
+  var MenuItem = Backbone.Model.extend({
     defaults: {
-	id: '',
-	name: '',
-	img: '',
-	calories: 0,
-	rating: 0,
-	description: ''
-    }
-});
+      id: '',
+      name: '',
+      img: '',
+      calories: 0,
+      rating: 0,
+      description: '',
+      selected: false,
+    },
+    // The next two properties are used to construct the REST URL
+    urlRoot: 'api/items', // will be combined with an ID
+    id: 'id',
+  });
 
-var MenuItemsCollection = Backbone.Collection.extend({
-    model: MenuItem
-});
+  var MenuItemsCollection = Backbone.Collection.extend({
+    model: MenuItem,
+    currentSelection: null,
+    url: 'api/items', // used for reading/writing the whole collection
 
-var item1 = new MenuItem({
-    id: 'chicken-pomegranate-salad',
-    name: 'Chicken Pomegranate Salad',
-    image: 'chicken-pomegranate-salad.jpg',
-    calories: 430,
-    rating: 4.1,
-    description: 'A simple, sweet and delicious salad of chicken, pomegranates, spinach, and spiced candied walnuts. Served with a side of citrus vinaigrette.',
-    source: 'https://www.pexels.com/photo/salad-pomegranate-chicken-spinach-5916/',
-    photographer: 'Karolina Grabowska.STAFFAGE'
-});
-
-var item2 = new MenuItem({
-    id: 'strawberry-pudding',
-    name: 'Strawberry Pudding',
-    image: 'strawberry-pudding.jpg',
-    calories: 280,
-    rating: 5,
-    description: 'A sweet and tasty pudding filled with strawyberries, blueberries, and raspberries.',
-    source: 'https://www.pexels.com/photo/restaurant-dessert-pudding-strawberries-3674/',
-    photographer: ''
-});
-
-var item3 = new MenuItem({
-    id: 'ham-goat-cheese-croissant',
-    name: 'Ham and Goat Cheese Croissant',
-    image: 'ham-goat-cheese-croissant.jpg',
-    calories: 670,
-    rating: 3.9,
-    description: 'A savory slice of ham topped with a wedge of goat cheese, all on a buttery, flaky croissant.',
-    source: 'https://www.pexels.com/photo/croissant-bakery-plate-food-7390/',
-    photographer: ''
-});
-
-var MenuItems = new MenuItemsCollection();
-MenuItems.add(item1);
-MenuItems.add(item2);
-MenuItems.add(item3);
-
-var MenuItemsView = Backbone.View.extend({
-
-    el: '#table-body',
-
-    initialize: function() {
-	this.render();
-	selectedItemView.render();
+    // Backbone expects an array from the server, but this can lead to
+    // JSON hijacking.
+    // See http://haacked.com/archive/2009/06/25/json-hijacking.aspx/
+    // The easy fix is to override the parse method (called by fetch)
+    // to extract the required information.
+    parse: function(response) {
+      return response.menu;
     },
 
-    render: function() {
-	this.$el.html('');
+    select: function(id) {
+      // Note: Only one item will ever be selected
+      var oldSelection = this.findWhere({selected: true});
+      if (oldSelection) {
+        if (oldSelection.get('id') === id) { return oldSelection; } // no change
+        oldSelection.set('selected', false);
+      }
 
-	MenuItems.each(function(model) {
-	    var menuItem = new MenuItemView({
-		model: model
-	    });
-
-	    this.$el.append(menuItem.render().el);
-	}.bind(this));
-
-	return this;
+      var newSelection = this.findWhere({id: (id)});
+      if (newSelection) {
+        newSelection.set('selected', true);
+      }
+      this.currentSelection = newSelection;
+      return this.currentSelection;
     }
 
-});
+  });
 
-var MenuItemView = Backbone.View.extend({
+  var MenuItemView = Backbone.View.extend({
 
     tagName: 'tr',
 
     events: {
-	'click .select-item': 'selectItem'
+      'click .select-item': 'selectItem'
+    },
+
+    initialize: function(item) {
+      this.model = item;
+      this.render();
     },
 
     selectItem: function(e) {
-	e.preventDefault();
-	selectedItem.set('selected', true);
-	selectedItem.set('item', this.model);
-	selectedItemView.render();
+      e.preventDefault();
+      router.navigate('select/' + this.model.id, {trigger: true});
     },
 
     template: _.template($('#menuItem-template').html(), {variable: 'menuItem'}),
 
     render: function() {
-	this.$el.html(this.template(this.model.attributes));
-	return this;
+      this.$el.html(this.template(this.model.attributes));
+      return this;
     }
 
-});
+  });
 
-var SelectedItem = Backbone.Model.extend({
-    defaults: {
-	selected: false,
-	item: ''
-    }
-});
-
-var selectedItem = new SelectedItem();
-
-var SelectedItemView = Backbone.View.extend({
-    model: selectedItem,
-
+  var SelectedItemView = Backbone.View.extend({
     el: '#selected-item',
 
     initialize: function() {
-	this.model = selectedItem;
-	this.render();
+      this.select(null);
     },
 
+    select: function(item) {
+      this.model = item;
+      this.render();
+    },
+
+    template: _.template($('#selectedItem-template').html(), {variable: 'menuItem'}),
+
     render: function() {
-	var content;
-	if (this.model.get('selected')) {
-	    content = "You are going to eat: " + this.model.get('item').get('name');
-	} else {
-	    content = "Aren't you hungry? You have not picked anything to eat yet.";
-	}
-
-	this.$el.html(content);
-
-	return this;
+      var content = this.template(this.model ? this.model.attributes : null);
+      this.$el.html(content);
+      return this;
     }
-});
+  });
 
-var ItemDetails = Backbone.View.extend({
-    el: '#details',
+  var ItemDetailView = Backbone.View.extend({
+    el: '#itemDetails-modal',
 
     events: {
-	'click .close': 'hide'
+      'click .select-item': 'selectItem'
     },
 
     template: _.template($('#itemDetails-template').html(), {variable: 'menuItem'}),
 
-    hide: function() {
-	this.$el.html('');
-	foodRouter.navigate('');
+    initialize: function() {
+      this.model = null;
     },
 
-    render: function(id) {
-	this.$el.html(this.template(MenuItems.get(id).attributes));
-	return this;
+    show: function(item) {
+      this.model = item;
+      this.render();
+      this.$el.modal({backdrop: true});
+    },
+
+    selectItem: function(e) {
+      e.preventDefault();
+      router.navigate('select/' + this.model.id, {trigger: true});
+    },
+
+    render: function() {
+      if (this.model) {
+        var content = this.template(this.model.attributes);
+        this.$el.html(content);
+      }
+      return this;
+    },
+
+  });
+
+  var FoodRouter = Backbone.Router.extend({
+    routes: {
+      'clear': 'clear',
+      'select/:id': 'item',
+      'detail/:id': 'detail'
     },
 
     clear: function() {
-	this.$el.html('');
-    }
-});
-
-var selectedItemView = new SelectedItemView();
-var itemDetails = new ItemDetails();
-var app = new MenuItemsView();
-
-var FoodRouter = Backbone.Router.extend({
-    routes: {
-	"": "home",
-	"item/:id": "item"
-    },
-
-    home: function(){
-	itemDetails.clear();
+      Backbone.trigger('app:clearSelection');
     },
 
     item: function(id) {
-	itemDetails.render(id);
+      Backbone.trigger('app:select', id);
+    },
+
+    detail: function(id) {
+      Backbone.trigger('app:showDetail', id);
     }
-});
+  });
 
-var foodRouter = new FoodRouter();
+  var AppView = Backbone.View.extend({
 
-Backbone.history.start();
+    el: '#app',
+
+    initialize: function() {
+      this.collection = new MenuItemsCollection();
+      this.collection.fetch({success: _.bind(this._afterFetch, this)});
+
+      Backbone.history.start();
+    },
+
+    _afterFetch: function() {
+      this._buildUI();
+
+      // Listen to messages from the router (moved from initialize)
+      this.listenTo(Backbone, 'app:clearSelection', this.clearSelection);
+      this.listenTo(Backbone, 'app:select', this.select);
+      this.listenTo(Backbone, 'app:showDetail', this.showDetailPopup);
+
+      // Listen for a change event from each model item (i.e. when
+      // changing the selected item
+      this.collection.each(function(item) {
+        this.listenTo(item, 'change', this.onItemChange);
+      }, this);
+    },
+
+    _buildUI: function() {
+      var menu = $('#table-body');
+      this.collection.each(function(item) {
+        this.addMenuItem(menu, item);
+      }, this);
+
+      this.selectedItemView = new SelectedItemView();
+      this.itemDetailView = new ItemDetailView();
+
+      this.listenTo(Backbone, 'app:clearSelection', this.clearSelection);
+      this.listenTo(Backbone, 'app:select', this.select);
+      this.listenTo(Backbone, 'app:showDetail', this.showDetailPopup);
+    },
+
+    clearSelection: function() {
+      this.select(null);
+    },
+
+    select: function(id) {
+      var newSelection = this.collection.select(id);
+      this.selectedItemView.select(newSelection);
+    },
+
+    showDetailPopup: function(id) {
+      var item = this.collection.findWhere({id: (id)});
+      if (!item) { return; }
+      this.itemDetailView.show(item);
+    },
+
+    render: function() {
+      return this; // all views will re-render on update
+    },
+
+    onItemChange: function(modelItem) {
+      modelItem.save(); // post the changed model back to the server
+    },
+
+    addMenuItem: function(menu, item) {
+      var menuItem = new MenuItemView(item);
+      menu.append(menuItem.render().el);
+    }
+
+  });
+
+  router = new FoodRouter();
+  new AppView();
+
+})();
